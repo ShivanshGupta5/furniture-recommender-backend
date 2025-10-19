@@ -5,72 +5,114 @@ from pydantic import BaseModel
 import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+import os
+import sys
 
-app = FastAPI()
+app = FastAPI(title="Furniture Recommender")
 
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to frontend URL in production
+    allow_origins=["*"],  # Change to your frontend URL in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load dataset
-df = pd.read_csv("data/furniture.csv")
-print(f"Loaded {len(df)} products.")
+# -------------------------
+# Paths
+# -------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+CSV_FILE = os.path.join(DATA_DIR, "furniture.csv")
+EMBED_FILE = os.path.join(DATA_DIR, "embeddings.npy")
 
-# Fill missing descriptions and convert to string
+# -------------------------
+# Check files exist
+# -------------------------
+if not os.path.exists(CSV_FILE):
+    print(f"ERROR: furniture.csv not found at {CSV_FILE}")
+    sys.exit(1)
+
+if not os.path.exists(EMBED_FILE):
+    print(f"ERROR: embeddings.npy not found at {EMBED_FILE}")
+    sys.exit(1)
+
+# -------------------------
+# Load dataset and embeddings
+# -------------------------
+try:
+    df = pd.read_csv(CSV_FILE)
+    print(f"Loaded {len(df)} products from CSV.")
+except Exception as e:
+    print("ERROR loading CSV:", e)
+    sys.exit(1)
+
 df['description'] = df['description'].fillna("").astype(str)
 
-# Load cached embeddings
-embedding_cache_file = "data/embeddings.npy"
-df['embedding'] = list(np.load(embedding_cache_file, allow_pickle=True))
-print("Loaded cached embeddings!")
+try:
+    df['embedding'] = list(np.load(EMBED_FILE, allow_pickle=True))
+    print("Loaded cached embeddings!")
+except Exception as e:
+    print("ERROR loading embeddings:", e)
+    sys.exit(1)
 
-# Pydantic model for request
+# -------------------------
+# Load sentence transformer once
+# -------------------------
+try:
+    embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+    print("SentenceTransformer model loaded!")
+except Exception as e:
+    print("ERROR loading SentenceTransformer:", e)
+    sys.exit(1)
+
+# -------------------------
+# Pydantic request model
+# -------------------------
 class UserMessage(BaseModel):
     message: str
 
+# -------------------------
+# Recommend endpoint
+# -------------------------
 @app.post("/recommend")
 def recommend(msg: UserMessage):
-    query = msg.message
+    try:
+        query = msg.message
+        query_emb = embed_model.encode(query, convert_to_numpy=True)
+        sims = cosine_similarity([query_emb], list(df['embedding']))[0]
 
-    # Use cosine similarity with cached embeddings
-    # If you want, you can compute query embeddings with SentenceTransformer here
-    # For now, let's assume you still compute query embedding dynamically
-    from sentence_transformers import SentenceTransformer
-    embed_model = SentenceTransformer('all-MiniLM-L6-v2')
-    query_emb = embed_model.encode(query, convert_to_numpy=True)
+        top_indices = np.argsort(sims)[-5:][::-1]
+        top_products = df.iloc[top_indices][['uniq_id', 'title', 'description', 'images']].to_dict(orient='records')
 
-    sims = cosine_similarity([query_emb], list(df['embedding']))[0]
+        result = []
+        for p in top_products:
+            img_url = "https://via.placeholder.com/200x150"  # default
+            if pd.notna(p['images']):
+                try:
+                    images_list = eval(p['images'])
+                    if images_list:
+                        img_url = images_list[0].strip()
+                except:
+                    pass
 
-    # Top 5 products
-    top_indices = np.argsort(sims)[-5:][::-1]
-    top_products = df.iloc[top_indices][['uniq_id', 'title', 'description', 'images']].to_dict(orient='records')
+            result.append({
+                "id": p['uniq_id'],
+                "name": p['title'],
+                "img": img_url,
+                "description": p['description']
+            })
 
-    # Format for frontend
-    result = []
-    for p in top_products:
-        if pd.notna(p['images']):
-            try:
-                images_list = eval(p['images'])
-                img_url = images_list[0].strip() if images_list else "https://via.placeholder.com/200x150"
-            except:
-                img_url = "https://via.placeholder.com/200x150"
-        else:
-            img_url = "https://via.placeholder.com/200x150"
+        return JSONResponse(content=result)
+    except Exception as e:
+        print("ERROR in /recommend:", e)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
-        result.append({
-            "id": p['uniq_id'],
-            "name": p['title'],
-            "img": img_url,
-            "description": p['description']
-        })
-
-    return result
-
+# -------------------------
+# Products endpoint
+# -------------------------
 @app.get("/products")
 def get_products():
     desired_cols = [
