@@ -3,9 +3,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import pandas as pd
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import cohere
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+
+# Initialize Cohere client
+co = cohere.Client(COHERE_API_KEY)
 
 app = FastAPI()
 
@@ -25,12 +34,15 @@ print(f"Loaded {len(df)} products.")
 # Fill missing descriptions and convert to string
 df['description'] = df['description'].fillna("").astype(str)
 
-# Load embedding model
-embed_model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Compute embeddings for all product descriptions (precompute for faster queries)
+# Precompute embeddings for all products using Cohere
 print("Generating embeddings for products...")
-df['embedding'] = list(embed_model.encode(df['description'], convert_to_numpy=True))
+
+def get_embedding(text):
+    response = co.embed(texts=[text], model="embed-english-light-v3.0")
+    return np.array(response.embeddings[0])
+
+# Precompute embeddings
+df['embedding'] = df['description'].apply(get_embedding)
 print("Embeddings ready!")
 
 # Pydantic model for request
@@ -40,7 +52,7 @@ class UserMessage(BaseModel):
 @app.post("/recommend")
 def recommend(msg: UserMessage):
     query = msg.message
-    query_emb = embed_model.encode(query, convert_to_numpy=True)
+    query_emb = get_embedding(query)
     
     # Compute cosine similarity
     sims = cosine_similarity([query_emb], list(df['embedding']))[0]
@@ -52,10 +64,8 @@ def recommend(msg: UserMessage):
     # Format for frontend
     result = []
     for p in top_products:
-        # Extract first valid image from list
         if pd.notna(p['images']):
             try:
-                # Convert string representation of list to actual Python list
                 images_list = eval(p['images'])
                 img_url = images_list[0].strip() if images_list else "https://via.placeholder.com/200x150"
             except:
@@ -67,7 +77,7 @@ def recommend(msg: UserMessage):
             "id": p['uniq_id'],
             "name": p['title'],
             "img": img_url,
-            "description": p['description']  # Keep description for tooltips
+            "description": p['description']
         })
     return result
 
@@ -91,9 +101,6 @@ def get_products():
         "material",
         "color",
     ]
-
-    # Keep only columns that exist in the DataFrame
     cols_to_include = [col for col in desired_cols if col in df.columns]
-
     data = df[cols_to_include].fillna("").to_dict(orient="records")
     return JSONResponse(content=data)
