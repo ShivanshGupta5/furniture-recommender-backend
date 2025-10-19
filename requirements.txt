@@ -1,5 +1,7 @@
 fastapi
 uvicorn
 pandas
-sentence-transformers
-torch
+numpy
+scikit-learn
+cohere
+python-dotenv
