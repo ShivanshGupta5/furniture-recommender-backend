@@ -38,7 +38,7 @@ df['description'] = df['description'].fillna("").astype(str)
 print("Generating embeddings for products...")
 
 def get_embedding(text):
-    response = co.embed(texts=[text], model="embed-english-light-v3.0")
+    response = co.embed(texts=[text], model="embed-english-v3.0")
     return np.array(response.embeddings[0])
 
 # Precompute embeddings
