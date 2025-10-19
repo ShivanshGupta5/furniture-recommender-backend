@@ -6,8 +6,6 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-import os
-import sys
 
 app = FastAPI(title="Furniture Recommender")
 
@@ -21,52 +19,23 @@ app.add_middleware(
 )
 
 # -------------------------
-# Paths
-# -------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-CSV_FILE = os.path.join(DATA_DIR, "furniture.csv")
-EMBED_FILE = os.path.join(DATA_DIR, "embeddings.npy")
-
-# -------------------------
-# Check files exist
-# -------------------------
-if not os.path.exists(CSV_FILE):
-    print(f"ERROR: furniture.csv not found at {CSV_FILE}")
-    sys.exit(1)
-
-if not os.path.exists(EMBED_FILE):
-    print(f"ERROR: embeddings.npy not found at {EMBED_FILE}")
-    sys.exit(1)
-
-# -------------------------
 # Load dataset and embeddings
 # -------------------------
-try:
-    df = pd.read_csv(CSV_FILE)
-    print(f"Loaded {len(df)} products from CSV.")
-except Exception as e:
-    print("ERROR loading CSV:", e)
-    sys.exit(1)
+df = pd.read_csv("data/furniture.csv")
+print(f"Loaded {len(df)} products.")
 
 df['description'] = df['description'].fillna("").astype(str)
 
-try:
-    df['embedding'] = list(np.load(EMBED_FILE, allow_pickle=True))
-    print("Loaded cached embeddings!")
-except Exception as e:
-    print("ERROR loading embeddings:", e)
-    sys.exit(1)
+# Load cached embeddings
+embedding_cache_file = "data/embeddings.npy"
+df['embedding'] = list(np.load(embedding_cache_file, allow_pickle=True))
+print("Loaded cached embeddings!")
 
 # -------------------------
 # Load sentence transformer once
 # -------------------------
-try:
-    embed_model = SentenceTransformer('all-MiniLM-L6-v2')
-    print("SentenceTransformer model loaded!")
-except Exception as e:
-    print("ERROR loading SentenceTransformer:", e)
-    sys.exit(1)
+embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+print("SentenceTransformer model loaded!")
 
 # -------------------------
 # Pydantic request model
@@ -81,12 +50,18 @@ class UserMessage(BaseModel):
 def recommend(msg: UserMessage):
     try:
         query = msg.message
+
+        # Compute query embedding
         query_emb = embed_model.encode(query, convert_to_numpy=True)
+
+        # Compute cosine similarity
         sims = cosine_similarity([query_emb], list(df['embedding']))[0]
 
+        # Top 5 products
         top_indices = np.argsort(sims)[-5:][::-1]
         top_products = df.iloc[top_indices][['uniq_id', 'title', 'description', 'images']].to_dict(orient='records')
 
+        # Format for frontend
         result = []
         for p in top_products:
             img_url = "https://via.placeholder.com/200x150"  # default
@@ -107,7 +82,6 @@ def recommend(msg: UserMessage):
 
         return JSONResponse(content=result)
     except Exception as e:
-        print("ERROR in /recommend:", e)
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 # -------------------------
