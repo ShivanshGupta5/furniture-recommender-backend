@@ -4634,7 +4634,7 @@ async def recommend(msg: UserMessage):
 
     if model_loading or embed_model is None:
         # Model is still loading
-        return JSONResponse(content={"status": "loading", "message": "Initializing model... Please wait as it is a one time process and will take a few moments"})
+        return JSONResponse(content={"status": "loading", "message": ""})
 
     query = msg.message
     query_emb = embed_model.encode(query, convert_to_numpy=True)
