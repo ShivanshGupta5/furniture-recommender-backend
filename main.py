@@ -45,6 +45,10 @@ else:
 class UserMessage(BaseModel):
     message: str
 
+@app.get("/")
+def root():
+    return {"message": "Furniture Recommender API is running!"}
+
 @app.post("/recommend")
 def recommend(msg: UserMessage):
     query = msg.message
